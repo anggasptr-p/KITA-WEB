@@ -2,10 +2,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// --- CONFIG SUPABASE ---
-const SUPABASE_URL = 'NEXT_PUBLIC_SUPABASE_URL_LU';
-const SUPABASE_KEY = 'NEXT_PUBLIC_SUPABASE_ANON_KEY_LU';
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Hardcode langsung biar sat-set tanpa error Environment Variable
+const supabaseUrl = 'https://lzmroxzxzhrtcidikhrk.supabase.co';
+const supabaseAnonKey = 'sb_publishable_scuopVknpzL9SKal3e9q_A_UyRb7ZXX';
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function PrivateCinemaChat() {
   // --- STATES ---
