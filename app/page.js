@@ -1,173 +1,194 @@
 "use client"
 import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { Send, Trash2, Rocket, Youtube, Search, Loader2 } from 'lucide-react';
 
-// Hardcode langsung biar sat-set tanpa error Environment Variable
+// KONFIGURASI SUPABASE (Sudah Hardcode sesuai milikmu)
 const supabaseUrl = 'https://lzmroxzxzhrtcidikhrk.supabase.co';
 const supabaseAnonKey = 'sb_publishable_scuopVknpzL9SKal3e9q_A_UyRb7ZXX';
-
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-export default function PrivateCinemaChat() {
-  // --- STATES ---
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [myUsername, setMyUsername] = useState("");
-  const [inputPass, setInputPass] = useState("");
-  const [videos, setVideos] = useState([]);
-  const [messages, setMessages] = useState([]);
-  const [chatInput, setChatInput] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  
-  const chatEndRef = useRef(null);
-  const SECRET_PASSWORD = "140725"; // Ganti password di sini
+// GANTI INI PAKE API KEY DARI GOOGLE CLOUD CONSOLE
+const YT_API_KEY = 'AQ.Ab8RN6J8eRhOjjCxPAIcCt5OgHNy9zazz8v27UOCHRJmfadz5A'; 
 
-  // --- PERSISTENCE & REALTIME ---
+export default function KitaSpaceV3() {
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [currentYt, setCurrentYt] = useState('');
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef(null);
+
   useEffect(() => {
-    const session = localStorage.getItem("isAllowed");
-    const savedName = localStorage.getItem("myName");
-    if (session === "true") {
-      setIsLoggedIn(true);
-      setMyUsername(savedName || "Stranger");
-    }
+    fetchMessages();
+    fetchNobar();
+
+    // Subscribe Realtime Chat & Nobar
+    const channel = supabase.channel('room1')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, fetchMessages)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'nobar' }, (payload) => {
+        const videoId = extractVideoId(payload.new.youtube_url);
+        setCurrentYt(videoId);
+      })
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
+  // Auto-scroll chat ke paling bawah
   useEffect(() => {
-    if (isLoggedIn) {
-      fetchData();
-      const channel = supabase
-        .channel('room-chat')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, 
-        (payload) => {
-          setMessages((prev) => [...prev, payload.new]);
-        })
-        .subscribe();
-      return () => supabase.removeChannel(channel);
-    }
-  }, [isLoggedIn]);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const fetchData = async () => {
-    const { data: vids } = await supabase.from('video_list').select('*').order('created_at', { ascending: false });
-    const { data: msgs } = await supabase.from('messages').select('*').order('created_at', { ascending: true }).limit(50);
-    setVideos(vids || []);
-    setMessages(msgs || []);
+  const fetchMessages = async () => {
+    const { data } = await supabase.from('messages').select('*').order('created_at', { ascending: true });
+    if (data) setMessages(data);
   };
 
-  // --- HANDLERS ---
-  const handleLogin = (e) => {
+  const fetchNobar = async () => {
+    const { data } = await supabase.from('nobar').select('youtube_url').eq('id', 1).single();
+    if (data) setCurrentYt(extractVideoId(data.youtube_url));
+  };
+
+  const extractVideoId = (url) => {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : url;
+  };
+
+  const searchYoutube = async (e) => {
     e.preventDefault();
-    if (inputPass === SECRET_PASSWORD) {
-      const name = prompt("Masukan Nama Lu (buat di chat):") || "User";
-      setMyUsername(name);
-      setIsLoggedIn(true);
-      localStorage.setItem("isAllowed", "true");
-      localStorage.setItem("myName", name);
-    } else { alert("Salah Kode, Bre!"); }
+    if (!searchQuery) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${searchQuery}&type=video&key=${YT_API_KEY}`);
+      const data = await res.json();
+      setSearchResults(data.items || []);
+    } catch (err) {
+      alert("API YouTube Bermasalah, Bre! Cek Key-nya.");
+    }
+    setLoading(false);
   };
 
-  const handleUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (file.size > 100 * 1024 * 1024) return alert("Kegedean! Maks 100MB.");
-
-    setUploading(true);
-    setProgress(0);
-    const fileName = `${Date.now()}_${file.name}`;
-
-    const { data, error } = await supabase.storage.from('videos').upload(fileName, file, {
-      onUploadProgress: (evt) => setProgress(Math.round((evt.loaded / evt.total) * 100))
-    });
-
-    if (data) {
-      const { data: urlData } = supabase.storage.from('videos').getPublicUrl(fileName);
-      await supabase.from('video_list').insert([{ title: file.name, video_url: urlData.publicUrl }]);
-      fetchData();
-    }
-    setUploading(false);
-    setProgress(0);
+  const playVideo = async (videoId) => {
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    await supabase.from('nobar').update({ youtube_url: url }).eq('id', 1);
+    setSearchResults([]);
+    setSearchQuery('');
   };
 
   const sendChat = async (e) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
-    await supabase.from('messages').insert([{ username: myUsername, text: chatInput }]);
-    setChatInput("");
+    if (!newMessage.trim()) return;
+    await supabase.from('messages').insert([{ content: newMessage, sender: 'Anon' }]);
+    setNewMessage('');
   };
 
-  // --- VIEW: LOGIN ---
-  if (!isLoggedIn) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-950 p-4">
-        <div className="bg-slate-900 p-8 rounded-3xl shadow-2xl w-full max-w-sm border border-slate-800 text-center">
-          <h2 className="text-3xl font-black text-white mb-6">🔒 PRIVATE SPACE</h2>
-          <form onSubmit={handleLogin}>
-            <input type="password" placeholder="Masukan Password..." className="w-full p-4 rounded-xl bg-slate-800 text-white mb-4 border border-slate-700 outline-none focus:ring-2 focus:ring-blue-500" 
-              value={inputPass} onChange={(e) => setInputPass(e.target.value)} />
-            <button className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl transition-all">MASUK</button>
-          </form>
-        </div>
-      </div>
-    );
-  }
+  const deleteMessage = async (id) => {
+    await supabase.from('messages').delete().eq('id', id);
+    fetchMessages();
+  };
 
-  // --- VIEW: DASHBOARD ---
   return (
-    <div className="flex flex-col h-screen bg-black text-white overflow-hidden">
-      {/* HEADER */}
-      <header className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950">
-        <h1 className="font-black text-xl tracking-tighter text-blue-500">KITA.SPACE</h1>
-        <button onClick={() => {localStorage.clear(); window.location.reload();}} className="text-xs font-bold text-red-500">LOGOUT</button>
-      </header>
+    <div className="flex flex-col h-screen bg-black text-zinc-100 overflow-hidden">
+      {/* HEADER: Search Bar */}
+      <div className="p-3 bg-zinc-900 border-b border-zinc-800 z-30">
+        <form onSubmit={searchYoutube} className="flex gap-2 max-w-4xl mx-auto">
+          <input 
+            className="flex-1 bg-zinc-800 border border-zinc-700 rounded-full px-4 py-2 text-sm outline-none focus:ring-2 ring-blue-500 transition-all"
+            placeholder="Cari lagu atau video nobar..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          <button type="submit" className="bg-blue-600 p-2 rounded-full hover:bg-blue-700 transition active:scale-95">
+            {loading ? <Loader2 className="animate-spin w-5 h-5" /> : <Search size={20} />}
+          </button>
+        </form>
 
-      <div className="flex flex-1 overflow-hidden flex-col md:flex-row">
-        {/* KIRI: VIDEO FEED */}
-        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-8 custom-scrollbar">
-          {/* Box Upload */}
-          <div className="p-6 bg-slate-900 border-2 border-dashed border-slate-700 rounded-3xl text-center">
-            <input type="file" accept="video/*" onChange={handleUpload} id="up" className="hidden" disabled={uploading} />
-            <label htmlFor="up" className="cursor-pointer block">
-              <span className="text-3xl block mb-2">🎬</span>
-              <p className="text-slate-400 font-medium text-sm">{uploading ? `Lagi Upload: ${progress}%` : "Klik buat share video baru (Maks 100MB)"}</p>
-              {uploading && <div className="mt-3 w-full bg-slate-800 rounded-full h-1.5"><div className="bg-blue-500 h-1.5 rounded-full transition-all" style={{width: `${progress}%`}}></div></div>}
-            </label>
-          </div>
-
-          {/* Videos */}
-          {videos.map((vid) => (
-            <div key={vid.id} className="bg-slate-900 rounded-3xl overflow-hidden border border-slate-800 shadow-lg">
-              <video src={vid.video_url} controls className="w-full aspect-video" />
-              <div className="p-4 font-bold text-slate-200">{vid.title}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* KANAN: CHAT SIDEBAR */}
-        <div className="w-full md:w-96 flex flex-col border-t md:border-t-0 md:border-l border-slate-800 bg-slate-950">
-          <div className="p-4 border-b border-slate-800 text-xs font-black uppercase tracking-widest text-slate-500">Live Chat Area</div>
-          
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-            {messages.map((m, i) => (
-              <div key={i} className={`flex flex-col ${m.username === myUsername ? 'items-end' : 'items-start'}`}>
-                <span className="text-[10px] text-slate-500 mb-1 uppercase tracking-tighter font-bold">{m.username}</span>
-                <div className={`p-3 rounded-2xl max-w-[80%] text-sm ${m.username === myUsername ? 'bg-blue-600 rounded-tr-none' : 'bg-slate-800 rounded-tl-none border border-slate-700'}`}>
-                  {m.text}
-                </div>
+        {/* Dropdown Hasil Search */}
+        {searchResults.length > 0 && (
+          <div className="absolute left-4 right-4 mt-2 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-40 max-w-xl mx-auto">
+            {searchResults.map((video) => (
+              <div 
+                key={video.id.videoId} 
+                onClick={() => playVideo(video.id.videoId)}
+                className="flex items-center gap-3 p-3 hover:bg-zinc-800 cursor-pointer border-b border-zinc-800 last:border-0"
+              >
+                <img src={video.snippet.thumbnails.default.url} className="w-16 rounded-lg" alt="thumb" />
+                <p className="text-xs font-medium line-clamp-2">{video.snippet.title}</p>
               </div>
             ))}
-            <div ref={chatEndRef} />
+          </div>
+        )}
+      </div>
+
+      {/* MAIN CONTENT: Split Screen on Desktop, Stack on Mobile */}
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+        
+        {/* PLAYER SECTION */}
+        <div className="w-full md:w-2/3 bg-black flex flex-col border-r border-zinc-800">
+          <div className="w-full aspect-video bg-black shadow-lg">
+            {currentYt ? (
+              <iframe 
+                className="w-full h-full" 
+                src={`https://www.youtube.com/embed/${currentYt}?autoplay=1`} 
+                allow="autoplay; encrypted-media" 
+                allowFullScreen
+              ></iframe>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-zinc-700">
+                <Youtube size={64} className="mb-4 opacity-10" />
+                <p className="text-sm italic">Cari video di atas untuk mulai nobar...</p>
+              </div>
+            )}
+          </div>
+          
+          {/* Logo & Info (Visible on Desktop) */}
+          <div className="hidden md:flex p-6 items-center gap-4">
+            <div className="bg-blue-600 p-3 rounded-2xl shadow-lg shadow-blue-900/20">
+              <Rocket size={32} />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold tracking-tight">KITA.SPACE</h2>
+              <p className="text-xs text-zinc-500">Streaming Room & Realtime Chat</p>
+            </div>
+          </div>
+        </div>
+
+        {/* CHAT SECTION */}
+        <div className="flex flex-col flex-1 bg-zinc-950 md:w-1/3 h-full">
+          {/* List Chat */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')]">
+            {messages.map((msg) => (
+              <div key={msg.id} className="flex justify-between items-start group">
+                <div className="bg-zinc-900 px-4 py-2 rounded-2xl rounded-tl-none border border-zinc-800 max-w-[90%] shadow-sm">
+                  <p className="text-[10px] text-blue-400 font-black mb-1 uppercase tracking-widest">User_{msg.id.toString().slice(-3)}</p>
+                  <p className="text-sm text-zinc-200 leading-relaxed">{msg.content}</p>
+                </div>
+                <button onClick={() => deleteMessage(msg.id)} className="opacity-0 group-hover:opacity-100 p-1 text-zinc-700 hover:text-red-500 transition">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+            <div ref={scrollRef} />
           </div>
 
-          <form onSubmit={sendChat} className="p-4 bg-slate-900 flex gap-2">
-            <input type="text" className="flex-1 bg-slate-800 border border-slate-700 rounded-full px-4 py-3 text-sm outline-none focus:ring-1 focus:ring-blue-500" 
-              placeholder="Tulis pesan..." value={chatInput} onChange={(e) => setChatInput(e.target.value)} />
-            <button className="bg-blue-600 w-12 h-12 rounded-full flex items-center justify-center hover:bg-blue-500 transition shadow-lg">🚀</button>
+          {/* Form Input Chat */}
+          <form onSubmit={sendChat} className="p-4 bg-zinc-900/50 border-t border-zinc-800 flex gap-2 backdrop-blur-sm">
+            <input 
+              className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 transition-all"
+              placeholder="Tulis pesan..."
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+            />
+            <button type="submit" className="bg-blue-600 p-2 rounded-xl hover:bg-blue-700 transition active:scale-90 shadow-lg shadow-blue-900/40">
+              <Send size={18} />
+            </button>
           </form>
         </div>
       </div>
     </div>
   );
-      }
+    }
+    
