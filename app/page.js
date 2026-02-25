@@ -8,7 +8,7 @@ const supabase = createClient(
   'sb_publishable_scuopVknpzL9SKal3e9q_A_UyRb7ZXX'
 );
 
-const YT_API_KEY = 'AIzaSy_GANTI_PAKE_API_KEY_LU'; // MASUKIN DISINI BRE!
+const YT_API_KEY = 'AIzaSyARPwF3b2gpJek1EE4Crsjn2Xk_gKBOHik'; // MASUKIN DISINI BRE!
 
 export default function KitaSpaceV4() {
   const [messages, setMessages] = useState([]);
